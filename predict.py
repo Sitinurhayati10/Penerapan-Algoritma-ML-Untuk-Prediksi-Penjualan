@@ -2,7 +2,15 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
+# Try to import joblib, if not available use pickle
+try:
+    import joblib
+    USE_JOBLIB = True
+except ImportError:
+    import pickle
+    USE_JOBLIB = False
+    st.warning("Joblib tidak tersedia, menggunakan pickle sebagai alternatif")
+    
 from pathlib import Path
 from sklearn.linear_model import LinearRegression
 import matplotlib.pyplot as plt
@@ -352,7 +360,33 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-MODEL_PATH = "stok_forecast_model.joblib"
+# Fungsi untuk menyimpan model (menggunakan joblib atau pickle)
+def save_model(model, filepath):
+    try:
+        if USE_JOBLIB:
+            joblib.dump(model, filepath)
+        else:
+            with open(filepath, 'wb') as f:
+                pickle.dump(model, f)
+        return True
+    except Exception as e:
+        st.error(f"Gagal menyimpan model: {str(e)}")
+        return False
+
+# Fungsi untuk memuat model (menggunakan joblib atau pickle)
+def load_model(filepath):
+    try:
+        if USE_JOBLIB:
+            model = joblib.load(filepath)
+        else:
+            with open(filepath, 'rb') as f:
+                model = pickle.load(f)
+        return model
+    except Exception as e:
+        st.error(f"Gagal memuat model: {str(e)}")
+        return None
+
+MODEL_PATH = "stok_forecast_model.pkl"  # Ubah ekstensi menjadi .pk
 DATA_PATH = "dataset.csv"
 
 # === Fungsi: Baca & Bersihkan Data ===
@@ -411,8 +445,12 @@ def train_and_save_model(df):
     
     model = LinearRegression()
     model.fit(X, y)
-    joblib.dump(model, MODEL_PATH)
-    return model, df_model
+    
+    # Simpan model menggunakan fungsi save_model
+    if save_model(model, MODEL_PATH):
+        return model, df_model
+    else:
+        return None, None
 
 # === Fungsi: Prediksi Stok Harian ===
 def predict_stock_daily(model, df_model, n_hari=30, safety_pct=20):
@@ -599,16 +637,30 @@ def main():
     
     # Muat atau latih model
     if Path(MODEL_PATH).exists():
-        model = joblib.load(MODEL_PATH)
-        # Buat df_model untuk rata-rata fitur
-        df_model = df.copy()
-        df_model["hari_dalam_minggu"] = df_model["Tanggal_Transaksi"].dt.dayofweek
-        df_model["bulan"] = df_model["Tanggal_Transaksi"].dt.month
-        st.markdown("<div class='fade-in'>ℹ️ Model dimuat dari file yang sudah ada.</div>", unsafe_allow_html=True)
+        model = load_model(MODEL_PATH)
+        if model is not None:
+            # Buat df_model untuk rata-rata fitur
+            df_model = df.copy()
+            df_model["hari_dalam_minggu"] = df_model["Tanggal_Transaksi"].dt.dayofweek
+            df_model["bulan"] = df_model["Tanggal_Transaksi"].dt.month
+            st.markdown("<div class='fade-in'>ℹ️ Model dimuat dari file yang sudah ada.</div>", unsafe_allow_html=True)
+        else:
+            st.error("Gagal memuat model yang sudah ada. Melatih ulang model...")
+            with st.spinner("Melatih model..."):
+                model, df_model = train_and_save_model(df)
+            if model is not None:
+                st.markdown("<div class='success-checkmark'></div> <span class='fade-in'>✅ Model berhasil dilatih dan disimpan!</span>", unsafe_allow_html=True)
+            else:
+                st.error("Gagal melatih model. Aplikasi tidak dapat dilanjutkan.")
+                st.stop()
     else:
         with st.spinner("Melatih model..."):
             model, df_model = train_and_save_model(df)
-        st.markdown("<div class='success-checkmark'></div> <span class='fade-in'>✅ Model berhasil dilatih dan disimpan!</span>", unsafe_allow_html=True)
+        if model is not None:
+            st.markdown("<div class='success-checkmark'></div> <span class='fade-in'>✅ Model berhasil dilatih dan disimpan!</span>", unsafe_allow_html=True)
+        else:
+            st.error("Gagal melatih model. Aplikasi tidak dapat dilanjutkan.")
+            st.stop()
     
     # Konten berdasarkan halaman yang dipilih
     if page == "Dashboard":
